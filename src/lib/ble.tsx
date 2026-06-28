@@ -1,9 +1,9 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { toast } from "sonner";
 
-export const SERVICE_UUID = "4fafc201-1fb5-459e-8fcc-c5c9c331914b";
-export const TX_UUID = "beb5483e-36e1-4688-b7f5-ea07361b26a8";
-export const RX_UUID = "1cce2a10-2244-41d7-8468-b7c4d52f9547";
+export const SERVICE_UUID = "6e400001-b5a3-f393-e0a9-e50e24dcca9e";
+export const TX_UUID = "6e400002-b5a3-f393-e0a9-e50e24dcca9e";
+export const RX_UUID = "6e400003-b5a3-f393-e0a9-e50e24dcca9e";
 
 export type BleUuidConfig = {
   preset: string;
@@ -266,7 +266,11 @@ export function BleProvider({ children }: { children: ReactNode }) {
       return false;
     }
     try {
-      await tx.writeValue(new Uint8Array(bytes));
+      if (typeof tx.writeValueWithoutResponse === "function") {
+        await tx.writeValueWithoutResponse(new Uint8Array(bytes));
+      } else {
+        await tx.writeValue(new Uint8Array(bytes));
+      }
       return true;
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Błąd wysyłania";
@@ -288,7 +292,7 @@ export function BleProvider({ children }: { children: ReactNode }) {
   }, [writeBytes]);
 
   const testCorrection = useCallback(async () => {
-    const ok = await writeBytes([0x03, 1, 1]);
+    const ok = await writeBytes([0x24]);
     if (ok) toast.success("⚡ Test korekty wysłany");
   }, [writeBytes]);
 
