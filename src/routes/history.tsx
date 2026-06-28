@@ -59,6 +59,7 @@ function HistoryPage() {
   };
 
   const triggerUpload = async () => {
+    if (isHttps) { mixedContentError(); return; }
     try {
       const res = await fetch(`${HOTSPOT}/api/upload_now`, { method: "POST" });
       if (!res.ok) throw new Error("HTTP " + res.status);
@@ -70,6 +71,7 @@ function HistoryPage() {
   };
 
   const fetchWavs = async () => {
+    if (isHttps) { mixedContentError(); return; }
     setWavLoading(true);
     try {
       const res = await fetch(`${HOTSPOT}/api/wavs`);
@@ -85,6 +87,7 @@ function HistoryPage() {
       setWavLoading(false);
     }
   };
+
 
   const playWav = (name: string) => {
     try {
