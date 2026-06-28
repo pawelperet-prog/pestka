@@ -124,6 +124,25 @@ function HistoryPage() {
         <p className="text-sm text-muted-foreground">Zdarzenia i nagrania z obroży</p>
       </header>
 
+      {isHttps && (
+        <section className="card-surface border border-warning/50 bg-warning/10 space-y-2">
+          <h2 className="font-semibold text-warning">⚠️ Hotspot obroży nieosiągalny</h2>
+          <p className="text-xs leading-relaxed text-muted-foreground">
+            Aplikacja działa po <code className="text-foreground">https://</code>, a obroża wystawia API po
+            zwykłym <code className="text-foreground">http://192.168.4.1</code>. Chrome blokuje takie żądania
+            („mixed content") — dlatego pobieranie historii i listy WAV nic nie robi.
+          </p>
+          <p className="text-xs leading-relaxed text-muted-foreground">
+            Rozwiązania: <br />
+            1) Otwórz aplikację po HTTP (np. zhostuj lokalnie) i połącz się z Wi-Fi obroży. <br />
+            2) W Chrome wejdź na <code className="text-foreground">chrome://flags/#unsafely-treat-insecure-origin-as-secure</code>,
+            dodaj <code className="text-foreground">http://192.168.4.1</code> i zrestartuj Chrome. <br />
+            3) Dodaj HTTPS w firmware obroży.
+          </p>
+        </section>
+      )}
+
+
       <section className="card-surface space-y-3">
         <h2 className="font-semibold">📊 Ostatnie 7 dni</h2>
         <div className="flex items-end justify-between gap-1 h-32">
