@@ -16,7 +16,7 @@ type BleState = {
   countdownMs: number;
   spacerOn: boolean;
   escapedAlarm: boolean;
-  connect: () => Promise<void>;
+  connect: (showAll?: boolean) => Promise<void>;
   sleepCollar: () => Promise<void>;
   testCorrection: () => Promise<void>;
   setSpacer: (on: boolean) => Promise<void>;
@@ -103,18 +103,30 @@ export function BleProvider({ children }: { children: ReactNode }) {
     }
   };
 
-  const connect = useCallback(async () => {
+  const connect = useCallback(async (showAll = false) => {
     const bt = (navigator as AnyBT).bluetooth;
     if (!bt) {
-      toast.error("Web Bluetooth nie jest obsługiwany w tej przeglądarce");
+      toast.error("Web Bluetooth nie jest obsługiwany. Użyj Chrome na Androidzie/desktopie (HTTPS).");
+      return;
+    }
+    if (typeof window !== "undefined" && window.location.protocol !== "https:" && window.location.hostname !== "localhost") {
+      toast.error("BLE wymaga HTTPS. Otwórz aplikację przez https://");
       return;
     }
     setConnecting(true);
     try {
-      const device = await bt.requestDevice({
-        filters: [{ namePrefix: "Pestka_" }, { namePrefix: "Xense_" }],
-        optionalServices: [SERVICE_UUID],
-      });
+      const options: AnyBT = showAll
+        ? { acceptAllDevices: true, optionalServices: [SERVICE_UUID] }
+        : {
+            filters: [
+              { namePrefix: "Pestka" },
+              { namePrefix: "Xense" },
+              { namePrefix: "PESTKA" },
+              { services: [SERVICE_UUID] },
+            ],
+            optionalServices: [SERVICE_UUID],
+          };
+      const device = await bt.requestDevice(options);
       deviceRef.current = device;
       device.addEventListener("gattserverdisconnected", handleDisconnected);
       const server = await device.gatt.connect();
