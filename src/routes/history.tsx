@@ -23,12 +23,24 @@ function HistoryPage() {
   const [loading, setLoading] = useState(false);
   const [wavs, setWavs] = useState<WavFile[]>([]);
   const [wavLoading, setWavLoading] = useState(false);
+  const [isHttps, setIsHttps] = useState(false);
 
   useEffect(() => {
     setEvents(loadHistory());
+    if (typeof window !== "undefined") {
+      setIsHttps(window.location.protocol === "https:");
+    }
   }, []);
 
+  const mixedContentError = () => {
+    toast.error(
+      "Przeglądarka zablokowała żądanie HTTP z https. Otwórz aplikację po http:// LUB włącz w Chrome flagę 'Insecure origins treated as secure' dla http://192.168.4.1",
+      { duration: 8000 },
+    );
+  };
+
   const fetchHistory = async () => {
+    if (isHttps) { mixedContentError(); return; }
     setLoading(true);
     try {
       const res = await fetch(`${HOTSPOT}/api/history`);
