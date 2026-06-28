@@ -23,12 +23,24 @@ function HistoryPage() {
   const [loading, setLoading] = useState(false);
   const [wavs, setWavs] = useState<WavFile[]>([]);
   const [wavLoading, setWavLoading] = useState(false);
+  const [isHttps, setIsHttps] = useState(false);
 
   useEffect(() => {
     setEvents(loadHistory());
+    if (typeof window !== "undefined") {
+      setIsHttps(window.location.protocol === "https:");
+    }
   }, []);
 
+  const mixedContentError = () => {
+    toast.error(
+      "Przeglądarka zablokowała żądanie HTTP z https. Otwórz aplikację po http:// LUB włącz w Chrome flagę 'Insecure origins treated as secure' dla http://192.168.4.1",
+      { duration: 8000 },
+    );
+  };
+
   const fetchHistory = async () => {
+    if (isHttps) { mixedContentError(); return; }
     setLoading(true);
     try {
       const res = await fetch(`${HOTSPOT}/api/history`);
@@ -47,6 +59,7 @@ function HistoryPage() {
   };
 
   const triggerUpload = async () => {
+    if (isHttps) { mixedContentError(); return; }
     try {
       const res = await fetch(`${HOTSPOT}/api/upload_now`, { method: "POST" });
       if (!res.ok) throw new Error("HTTP " + res.status);
@@ -58,6 +71,7 @@ function HistoryPage() {
   };
 
   const fetchWavs = async () => {
+    if (isHttps) { mixedContentError(); return; }
     setWavLoading(true);
     try {
       const res = await fetch(`${HOTSPOT}/api/wavs`);
@@ -73,6 +87,7 @@ function HistoryPage() {
       setWavLoading(false);
     }
   };
+
 
   const playWav = (name: string) => {
     try {
@@ -108,6 +123,25 @@ function HistoryPage() {
         <h1 className="text-2xl font-bold">Historia Szczekań</h1>
         <p className="text-sm text-muted-foreground">Zdarzenia i nagrania z obroży</p>
       </header>
+
+      {isHttps && (
+        <section className="card-surface border border-warning/50 bg-warning/10 space-y-2">
+          <h2 className="font-semibold text-warning">⚠️ Hotspot obroży nieosiągalny</h2>
+          <p className="text-xs leading-relaxed text-muted-foreground">
+            Aplikacja działa po <code className="text-foreground">https://</code>, a obroża wystawia API po
+            zwykłym <code className="text-foreground">http://192.168.4.1</code>. Chrome blokuje takie żądania
+            („mixed content") — dlatego pobieranie historii i listy WAV nic nie robi.
+          </p>
+          <p className="text-xs leading-relaxed text-muted-foreground">
+            Rozwiązania: <br />
+            1) Otwórz aplikację po HTTP (np. zhostuj lokalnie) i połącz się z Wi-Fi obroży. <br />
+            2) W Chrome wejdź na <code className="text-foreground">chrome://flags/#unsafely-treat-insecure-origin-as-secure</code>,
+            dodaj <code className="text-foreground">http://192.168.4.1</code> i zrestartuj Chrome. <br />
+            3) Dodaj HTTPS w firmware obroży.
+          </p>
+        </section>
+      )}
+
 
       <section className="card-surface space-y-3">
         <h2 className="font-semibold">📊 Ostatnie 7 dni</h2>

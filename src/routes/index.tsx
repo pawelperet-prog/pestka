@@ -143,7 +143,7 @@ function Dashboard() {
           disabled={!ble.connected}
           className="mt-4 w-full rounded-2xl bg-destructive text-destructive-foreground py-3 font-semibold disabled:opacity-40"
         >
-          Testuj Korektę
+          {ble.connected ? "Testuj Korektę" : "Połącz najpierw z obrożą"}
         </button>
       </section>
     </div>
