@@ -5,6 +5,34 @@ export const SERVICE_UUID = "4fafc201-1fb5-459e-8fcc-c5c9c331914b";
 export const TX_UUID = "beb5483e-36e1-4688-b7f5-ea07361b26a8";
 export const RX_UUID = "1cce2a10-2244-41d7-8468-b7c4d52f9547";
 
+export type BleUuidConfig = {
+  preset: string;
+  serviceUuid: string;
+  txUuid: string;
+  rxUuid: string;
+};
+
+export const XENSE_BLE_CONFIG: BleUuidConfig = {
+  preset: "xense",
+  serviceUuid: SERVICE_UUID,
+  txUuid: TX_UUID,
+  rxUuid: RX_UUID,
+};
+
+export const NORDIC_UART_BLE_CONFIG: BleUuidConfig = {
+  preset: "nordic-uart",
+  serviceUuid: "6e400001-b5a3-f393-e0a9-e50e24dcca9e",
+  txUuid: "6e400002-b5a3-f393-e0a9-e50e24dcca9e",
+  rxUuid: "6e400003-b5a3-f393-e0a9-e50e24dcca9e",
+};
+
+export const BLE_PRESETS = [
+  { id: "xense", label: "Pestka Xense / ESP32 custom", config: XENSE_BLE_CONFIG },
+  { id: "nordic-uart", label: "Nordic UART / ESP32 BLE UART", config: NORDIC_UART_BLE_CONFIG },
+] as const;
+
+export const BLE_CONFIG_KEY = "pestka_ble_uuid_config";
+
 const AUTO_DISCONNECT_MS = 30 * 60 * 1000;
 
 type BleState = {
@@ -27,6 +55,49 @@ const Ctx = createContext<BleState | null>(null);
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyBT = any;
+
+const normalizeUuid = (value: string) => value.trim().toLowerCase();
+
+const uniqueConfigs = (configs: BleUuidConfig[]) => {
+  const seen = new Set<string>();
+  return configs.filter((config) => {
+    const key = `${normalizeUuid(config.serviceUuid)}:${normalizeUuid(config.txUuid)}:${normalizeUuid(config.rxUuid)}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+};
+
+export function loadBleConfig(): BleUuidConfig {
+  if (typeof localStorage === "undefined") return XENSE_BLE_CONFIG;
+  try {
+    const raw = localStorage.getItem(BLE_CONFIG_KEY);
+    if (!raw) return XENSE_BLE_CONFIG;
+    const parsed = JSON.parse(raw) as Partial<BleUuidConfig>;
+    if (!parsed.serviceUuid || !parsed.txUuid || !parsed.rxUuid) return XENSE_BLE_CONFIG;
+    return {
+      preset: parsed.preset ?? "custom",
+      serviceUuid: normalizeUuid(parsed.serviceUuid),
+      txUuid: normalizeUuid(parsed.txUuid),
+      rxUuid: normalizeUuid(parsed.rxUuid),
+    };
+  } catch {
+    return XENSE_BLE_CONFIG;
+  }
+}
+
+export function saveBleConfig(config: BleUuidConfig) {
+  if (typeof localStorage === "undefined") return;
+  localStorage.setItem(
+    BLE_CONFIG_KEY,
+    JSON.stringify({
+      preset: config.preset,
+      serviceUuid: normalizeUuid(config.serviceUuid),
+      txUuid: normalizeUuid(config.txUuid),
+      rxUuid: normalizeUuid(config.rxUuid),
+    }),
+  );
+}
 
 export function BleProvider({ children }: { children: ReactNode }) {
   const [supported, setSupported] = useState(false);
@@ -115,31 +186,66 @@ export function BleProvider({ children }: { children: ReactNode }) {
     }
     setConnecting(true);
     try {
+      const savedConfig = loadBleConfig();
+      const knownConfigs = uniqueConfigs([savedConfig, XENSE_BLE_CONFIG, NORDIC_UART_BLE_CONFIG]);
+      const optionalServices = Array.from(
+        new Set([...knownConfigs.map((config) => normalizeUuid(config.serviceUuid)), "battery_service", "device_information"]),
+      );
       const options: AnyBT = showAll
-        ? { acceptAllDevices: true, optionalServices: [SERVICE_UUID] }
+        ? { acceptAllDevices: true, optionalServices }
         : {
             filters: [
               { namePrefix: "Pestka" },
               { namePrefix: "Xense" },
               { namePrefix: "PESTKA" },
-              { services: [SERVICE_UUID] },
+              ...knownConfigs.map((config) => ({ services: [normalizeUuid(config.serviceUuid)] })),
             ],
-            optionalServices: [SERVICE_UUID],
+            optionalServices,
           };
       const device = await bt.requestDevice(options);
       deviceRef.current = device;
       device.addEventListener("gattserverdisconnected", handleDisconnected);
       const server = await device.gatt.connect();
-      const service = await server.getPrimaryService(SERVICE_UUID);
-      const tx = await service.getCharacteristic(TX_UUID);
-      txRef.current = tx;
-      try {
-        const rx = await service.getCharacteristic(RX_UUID);
-        await rx.startNotifications();
-        rx.addEventListener("characteristicvaluechanged", onNotify);
-      } catch {
-        // RX optional
+      let connectedConfig: BleUuidConfig | null = null;
+      let lastError: unknown = null;
+
+      for (const config of knownConfigs) {
+        try {
+          const service = await server.getPrimaryService(normalizeUuid(config.serviceUuid));
+          const tx = await service.getCharacteristic(normalizeUuid(config.txUuid));
+          txRef.current = tx;
+          connectedConfig = config;
+          try {
+            const rx = await service.getCharacteristic(normalizeUuid(config.rxUuid));
+            await rx.startNotifications();
+            rx.addEventListener("characteristicvaluechanged", onNotify);
+          } catch {
+            // RX optional
+          }
+          break;
+        } catch (err) {
+          lastError = err;
+        }
       }
+
+      if (!connectedConfig) {
+        try {
+          device.gatt?.disconnect();
+        } catch {
+          // ignore
+        }
+        console.info("Pestka BLE service discovery failed", {
+          deviceName: device.name,
+          triedServices: knownConfigs.map((config) => config.serviceUuid),
+          lastError,
+        });
+        throw new Error(
+          `Wybrane urządzenie nie ma usługi Pestka Xense. Sprawdź, czy to obroża, albo ustaw właściwy BLE UUID w Ustawieniach → Bluetooth. Próbowano: ${knownConfigs
+            .map((config) => config.serviceUuid)
+            .join(", ")}`,
+        );
+      }
+
       setConnected(true);
       setDeviceName(device.name ?? "Obroża");
       setEscapedAlarm(false);

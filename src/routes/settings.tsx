@@ -2,7 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { Trash2 } from "lucide-react";
 import { toast } from "sonner";
-import { useBle } from "@/lib/ble";
+import { BLE_PRESETS, loadBleConfig, saveBleConfig, useBle, type BleUuidConfig } from "@/lib/ble";
 import { clearHistory, loadHistory } from "@/lib/history";
 
 export const Route = createFileRoute("/settings")({
@@ -22,6 +22,7 @@ function SettingsPage() {
   const [ssid, setSsid] = useState("");
   const [pass, setPass] = useState("");
   const [count, setCount] = useState(0);
+  const [bleConfig, setBleConfig] = useState<BleUuidConfig>(() => loadBleConfig());
 
   useEffect(() => {
     setCount(loadHistory().length);
@@ -46,6 +47,24 @@ function SettingsPage() {
     clearHistory();
     setCount(0);
     toast("🗑️ Historia lokalna wyczyszczona");
+  };
+
+  const applyBlePreset = (presetId: string) => {
+    const preset = BLE_PRESETS.find((item) => item.id === presetId);
+    if (preset) {
+      setBleConfig({ ...preset.config });
+    } else {
+      setBleConfig((current) => ({ ...current, preset: "custom" }));
+    }
+  };
+
+  const saveBluetooth = () => {
+    if (!bleConfig.serviceUuid.trim() || !bleConfig.txUuid.trim() || !bleConfig.rxUuid.trim()) {
+      toast.error("Uzupełnij Service, TX i RX UUID");
+      return;
+    }
+    saveBleConfig(bleConfig);
+    toast.success("Zapisano UUID BLE");
   };
 
   return (
@@ -80,6 +99,55 @@ function SettingsPage() {
           Zapisz i prześlij do obroży
         </button>
         <p className="text-xs text-muted-foreground">Połącz się z hotspotem obroży aby wysłać dane.</p>
+      </section>
+
+      <section className="card-surface space-y-3">
+        <h2 className="font-semibold">🔵 Bluetooth</h2>
+        <p className="text-xs text-muted-foreground">
+          Jeśli po wyborze urządzenia pojawia się „No Services matching UUID”, firmware obroży ma inny profil BLE.
+        </p>
+        <div className="space-y-1">
+          <label className="text-xs text-muted-foreground">Profil BLE</label>
+          <select
+            value={bleConfig.preset}
+            onChange={(event) => applyBlePreset(event.target.value)}
+            className="w-full rounded-xl bg-input border border-border px-3 py-2.5 text-sm outline-none focus:border-primary"
+          >
+            {BLE_PRESETS.map((preset) => (
+              <option key={preset.id} value={preset.id}>{preset.label}</option>
+            ))}
+            <option value="custom">Własne UUID</option>
+          </select>
+        </div>
+        <div className="space-y-1">
+          <label className="text-xs text-muted-foreground">Service UUID</label>
+          <input
+            value={bleConfig.serviceUuid}
+            onChange={(event) => setBleConfig((current) => ({ ...current, preset: "custom", serviceUuid: event.target.value }))}
+            className="w-full rounded-xl bg-input border border-border px-3 py-2.5 text-xs outline-none focus:border-primary"
+          />
+        </div>
+        <div className="grid grid-cols-1 gap-2">
+          <div className="space-y-1">
+            <label className="text-xs text-muted-foreground">TX / write UUID</label>
+            <input
+              value={bleConfig.txUuid}
+              onChange={(event) => setBleConfig((current) => ({ ...current, preset: "custom", txUuid: event.target.value }))}
+              className="w-full rounded-xl bg-input border border-border px-3 py-2.5 text-xs outline-none focus:border-primary"
+            />
+          </div>
+          <div className="space-y-1">
+            <label className="text-xs text-muted-foreground">RX / notify UUID</label>
+            <input
+              value={bleConfig.rxUuid}
+              onChange={(event) => setBleConfig((current) => ({ ...current, preset: "custom", rxUuid: event.target.value }))}
+              className="w-full rounded-xl bg-input border border-border px-3 py-2.5 text-xs outline-none focus:border-primary"
+            />
+          </div>
+        </div>
+        <button onClick={saveBluetooth} className="w-full rounded-2xl bg-secondary text-secondary-foreground py-3 font-semibold">
+          Zapisz profil Bluetooth
+        </button>
       </section>
 
       <section className="card-surface space-y-3">
