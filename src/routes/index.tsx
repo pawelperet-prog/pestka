@@ -71,6 +71,9 @@ function Dashboard() {
               >
                 Nie widzisz obroży? Pokaż wszystkie urządzenia BLE
               </button>
+              <p className="text-[11px] leading-relaxed text-muted-foreground text-center">
+                Błąd „No Services matching UUID” oznacza zwykle zły profil BLE w firmware — zmień go w Ustawieniach → Bluetooth.
+              </p>
             </div>
           ) : (
             <button
