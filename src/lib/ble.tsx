@@ -292,7 +292,7 @@ export function BleProvider({ children }: { children: ReactNode }) {
   }, [writeBytes]);
 
   const testCorrection = useCallback(async () => {
-    const ok = await writeBytes([0x03, 1, 1]);
+    const ok = await writeBytes([0x24]);
     if (ok) toast.success("⚡ Test korekty wysłany");
   }, [writeBytes]);
 
