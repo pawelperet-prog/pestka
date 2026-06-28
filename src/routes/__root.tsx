@@ -101,7 +101,6 @@ function RootComponent() {
     <QueryClientProvider client={queryClient}>
       <BleProvider>
         <AppShell />
-        <Outlet />
         <Toaster position="top-center" theme="dark" richColors closeButton />
       </BleProvider>
     </QueryClientProvider>
