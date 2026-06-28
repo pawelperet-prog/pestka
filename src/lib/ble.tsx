@@ -266,7 +266,11 @@ export function BleProvider({ children }: { children: ReactNode }) {
       return false;
     }
     try {
-      await tx.writeValue(new Uint8Array(bytes));
+      if (typeof tx.writeValueWithoutResponse === "function") {
+        await tx.writeValueWithoutResponse(new Uint8Array(bytes));
+      } else {
+        await tx.writeValue(new Uint8Array(bytes));
+      }
       return true;
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Błąd wysyłania";
