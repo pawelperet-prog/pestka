@@ -55,14 +55,23 @@ function Dashboard() {
 
         <div className="mt-4 grid grid-cols-1 gap-2">
           {!ble.connected ? (
-            <button
-              onClick={ble.connect}
-              disabled={ble.connecting || !ble.supported}
-              className="flex items-center justify-center gap-2 rounded-2xl bg-primary text-primary-foreground py-3 font-semibold disabled:opacity-50 transition-opacity"
-            >
-              <Bluetooth size={18} />
-              {ble.connecting ? "Łączenie..." : "Szukaj Obroży"}
-            </button>
+            <div className="grid grid-cols-1 gap-2">
+              <button
+                onClick={() => ble.connect(false)}
+                disabled={ble.connecting || !ble.supported}
+                className="flex items-center justify-center gap-2 rounded-2xl bg-primary text-primary-foreground py-3 font-semibold disabled:opacity-50 transition-opacity"
+              >
+                <Bluetooth size={18} />
+                {ble.connecting ? "Łączenie..." : "Szukaj Obroży"}
+              </button>
+              <button
+                onClick={() => ble.connect(true)}
+                disabled={ble.connecting || !ble.supported}
+                className="text-xs text-muted-foreground underline py-1"
+              >
+                Nie widzisz obroży? Pokaż wszystkie urządzenia BLE
+              </button>
+            </div>
           ) : (
             <button
               onClick={ble.sleepCollar}
