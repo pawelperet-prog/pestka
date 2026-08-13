@@ -177,7 +177,7 @@ export function BleProvider({ children }: { children: ReactNode }) {
   const connect = useCallback(async (showAll = false) => {
     const bt = (navigator as AnyBT).bluetooth;
     if (!bt) {
-      toast.error("Web Bluetooth nie jest obsługiwany. Użyj Chrome na Androidzie/desktopie (HTTPS).");
+      toast.error("Web Bluetooth nie jest wspierany w standardowym Safari. Na iOS (iPhone) otwórz ten adres w darmowej przeglądarce 'Bluefy' lub 'WebBLE' z App Store!", { duration: 7000 });
       return;
     }
     if (typeof window !== "undefined" && window.location.protocol !== "https:" && window.location.hostname !== "localhost") {
