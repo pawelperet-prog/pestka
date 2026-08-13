@@ -1,5 +1,5 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { Link, createRootRouteWithContext, useRouter } from "@tanstack/react-router";
+import { Link, createRootRouteWithContext } from "@tanstack/react-router";
+import type { QueryClient } from "@tanstack/react-query";
 import { Toaster } from "sonner";
 
 import { BleProvider } from "../lib/ble";
@@ -23,15 +23,14 @@ function NotFoundComponent() {
 
 function ErrorComponent({ error, reset }: { error: Error; reset: () => void }) {
   console.error(error);
-  const router = useRouter();
   return (
     <div className="flex min-h-screen items-center justify-center bg-background px-4">
       <div className="max-w-md text-center">
         <h1 className="text-xl font-semibold tracking-tight">Coś poszło nie tak</h1>
-        <p className="mt-2 text-sm text-muted-foreground break-words">{error.message}</p>
+        <p className="mt-2 text-sm text-muted-foreground break-words">{error?.message || "Wystąpił błąd"}</p>
         <div className="mt-6 flex flex-wrap justify-center gap-2">
           <button
-            onClick={() => { router.invalidate(); reset(); }}
+            onClick={() => { reset(); window.location.reload(); }}
             className="inline-flex items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:opacity-90"
           >
             Spróbuj ponownie
@@ -49,14 +48,10 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
 });
 
 function RootComponent() {
-  const { queryClient } = Route.useRouteContext();
-
   return (
-    <QueryClientProvider client={queryClient}>
-      <BleProvider>
-        <AppShell />
-        <Toaster position="top-center" theme="dark" richColors closeButton />
-      </BleProvider>
-    </QueryClientProvider>
+    <BleProvider>
+      <AppShell />
+      <Toaster position="top-center" theme="dark" richColors closeButton />
+    </BleProvider>
   );
 }
