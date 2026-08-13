@@ -1,8 +1,6 @@
 import { Link, createRootRouteWithContext } from "@tanstack/react-router";
 import type { QueryClient } from "@tanstack/react-query";
 import { Toaster } from "sonner";
-
-import { BleProvider } from "../lib/ble";
 import { AppShell } from "../components/AppShell";
 
 function NotFoundComponent() {
@@ -49,9 +47,9 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
 
 function RootComponent() {
   return (
-    <BleProvider>
+    <>
       <AppShell />
       <Toaster position="top-center" theme="dark" richColors closeButton />
-    </BleProvider>
+    </>
   );
 }

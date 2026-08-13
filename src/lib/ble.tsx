@@ -332,9 +332,25 @@ export function BleProvider({ children }: { children: ReactNode }) {
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
 
-export function useBle() {
+export function useBle(): BleState {
   const v = useContext(Ctx);
-  if (!v) throw new Error("useBle must be used within BleProvider");
+  if (!v) {
+    return {
+      supported: typeof navigator !== "undefined" && !!(navigator as AnyBT).bluetooth,
+      connected: false,
+      connecting: false,
+      deviceName: null,
+      battery: null,
+      countdownMs: 0,
+      spacerOn: false,
+      escapedAlarm: false,
+      connect: async () => {},
+      sleepCollar: async () => {},
+      testCorrection: async () => {},
+      setSpacer: async () => {},
+      dismissAlarm: () => {},
+    };
+  }
   return v;
 }
 
