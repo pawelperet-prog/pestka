@@ -57,22 +57,15 @@ function Dashboard() {
           {!ble.connected ? (
             <div className="grid grid-cols-1 gap-2">
               <button
-                onClick={() => ble.connect(false)}
-                disabled={ble.connecting || !ble.supported}
-                className="flex items-center justify-center gap-2 rounded-2xl bg-primary text-primary-foreground py-3 font-semibold disabled:opacity-50 transition-opacity"
-              >
-                <Bluetooth size={18} />
-                {ble.connecting ? "Łączenie..." : "Szukaj Obroży"}
-              </button>
-              <button
                 onClick={() => ble.connect(true)}
-                disabled={ble.connecting || !ble.supported}
-                className="text-xs text-muted-foreground underline py-1"
+                disabled={ble.connecting}
+                className="flex items-center justify-center gap-2 rounded-2xl bg-primary text-primary-foreground py-3.5 font-semibold active:scale-[0.98] transition-transform disabled:opacity-50 cursor-pointer"
               >
-                Nie widzisz obroży? Pokaż wszystkie urządzenia BLE
+                <Bluetooth size={20} />
+                {ble.connecting ? "Szukanie urządzeń..." : "Połącz z Obrożą (BLE)"}
               </button>
-              <p className="text-[11px] leading-relaxed text-muted-foreground text-center">
-                Błąd „No Services matching UUID” oznacza zwykle zły profil BLE w firmware — zmień go w Ustawieniach → Bluetooth.
+              <p className="text-[11px] leading-relaxed text-muted-foreground text-center pt-1">
+                Upewnij się, że Bluetooth w systemie Windows / telefonie jest włączony, a obroża wybudzona.
               </p>
             </div>
           ) : (

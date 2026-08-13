@@ -27,7 +27,7 @@ export const NORDIC_UART_BLE_CONFIG: BleUuidConfig = {
 };
 
 export const BLE_PRESETS = [
-  { id: "xense", label: "Pestka Xense / ESP32 custom", config: XENSE_BLE_CONFIG },
+  { id: "xense", label: "Pestka Xense / ESP32 custom (6E40...)", config: XENSE_BLE_CONFIG },
   { id: "nordic-uart", label: "Nordic UART / ESP32 BLE UART", config: NORDIC_UART_BLE_CONFIG },
 ] as const;
 
@@ -35,7 +35,7 @@ export const BLE_CONFIG_KEY = "pestka_ble_uuid_config";
 
 const AUTO_DISCONNECT_MS = 30 * 60 * 1000;
 
-type BleState = {
+export type BleState = {
   supported: boolean;
   connected: boolean;
   connecting: boolean;
@@ -100,7 +100,7 @@ export function saveBleConfig(config: BleUuidConfig) {
 }
 
 export function BleProvider({ children }: { children: ReactNode }) {
-  const [supported, setSupported] = useState(false);
+  const [supported, setSupported] = useState(true);
   const [connected, setConnected] = useState(false);
   const [connecting, setConnecting] = useState(false);
   const [deviceName, setDeviceName] = useState<string | null>(null);
@@ -116,7 +116,8 @@ export function BleProvider({ children }: { children: ReactNode }) {
   const spacerRef = useRef(false);
 
   useEffect(() => {
-    setSupported(typeof navigator !== "undefined" && !!(navigator as AnyBT).bluetooth);
+    const isBtSupported = typeof navigator !== "undefined" && !!(navigator as AnyBT)?.bluetooth;
+    setSupported(isBtSupported);
   }, []);
 
   const clearTimers = () => {
@@ -161,7 +162,6 @@ export function BleProvider({ children }: { children: ReactNode }) {
   const onNotify = (e: Event) => {
     const target = e.target as AnyBT;
     const value: DataView = target.value;
-    // Try parse: if starts with "B:" voltage e.g. "B:3.87" or first byte command code
     try {
       const text = new TextDecoder().decode(value.buffer);
       const m = text.match(/(\d+\.\d{1,3})/);
@@ -174,37 +174,45 @@ export function BleProvider({ children }: { children: ReactNode }) {
     }
   };
 
-  const connect = useCallback(async (showAll = false) => {
-    const bt = (navigator as AnyBT).bluetooth;
+  const connect = useCallback(async (_showAll = true) => {
+    const bt = typeof navigator !== "undefined" ? (navigator as AnyBT)?.bluetooth : null;
     if (!bt) {
-      toast.error("Web Bluetooth nie jest wspierany w standardowym Safari. Na iOS (iPhone) otwórz ten adres w darmowej przeglądarce 'Bluefy' lub 'WebBLE' z App Store!", { duration: 7000 });
+      toast.error(
+        "Twoja przeglądarka nie obsługuje Web Bluetooth. Na Windows użyj Google Chrome lub Microsoft Edge. Na iOS (iPhone) otwórz stronę w bezpłatnej przeglądarce 'Bluefy'!",
+        { duration: 8000 }
+      );
       return;
     }
     if (typeof window !== "undefined" && window.location.protocol !== "https:" && window.location.hostname !== "localhost") {
-      toast.error("BLE wymaga HTTPS. Otwórz aplikację przez https://");
+      toast.error("BLE wymaga bezpiecznego połączenia HTTPS. Otwórz stronę przez https://", { duration: 6000 });
       return;
     }
+
     setConnecting(true);
     try {
       const savedConfig = loadBleConfig();
       const knownConfigs = uniqueConfigs([savedConfig, XENSE_BLE_CONFIG, NORDIC_UART_BLE_CONFIG]);
       const optionalServices = Array.from(
-        new Set([...knownConfigs.map((config) => normalizeUuid(config.serviceUuid)), "battery_service", "device_information"]),
+        new Set([
+          ...knownConfigs.map((config) => normalizeUuid(config.serviceUuid)),
+          "6e400001-b5a3-f393-e0a9-e50e24dcca9e",
+          "battery_service",
+          "device_information"
+        ]),
       );
-      const options: AnyBT = showAll
-        ? { acceptAllDevices: true, optionalServices }
-        : {
-            filters: [
-              { namePrefix: "Pestka" },
-              { namePrefix: "Xense" },
-              { namePrefix: "PESTKA" },
-              ...knownConfigs.map((config) => ({ services: [normalizeUuid(config.serviceUuid)] })),
-            ],
-            optionalServices,
-          };
+
+      // acceptAllDevices ensures Windows / Android / iOS native browser picker opens immediately
+      const options: AnyBT = {
+        acceptAllDevices: true,
+        optionalServices,
+      };
+
+      toast.info("Wybierz obrożę w oknie przeglądarki...");
       const device = await bt.requestDevice(options);
       deviceRef.current = device;
       device.addEventListener("gattserverdisconnected", handleDisconnected);
+
+      toast.info("Łączenie z urządzeniem...");
       const server = await device.gatt.connect();
       let connectedConfig: BleUuidConfig | null = null;
       let lastError: unknown = null;
@@ -234,26 +242,28 @@ export function BleProvider({ children }: { children: ReactNode }) {
         } catch {
           // ignore
         }
-        console.info("Pestka BLE service discovery failed", {
+        console.warn("Pestka BLE service discovery", {
           deviceName: device.name,
           triedServices: knownConfigs.map((config) => config.serviceUuid),
           lastError,
         });
         throw new Error(
-          `Wybrane urządzenie nie ma usługi Pestka Xense. Sprawdź, czy to obroża, albo ustaw właściwy BLE UUID w Ustawieniach → Bluetooth. Próbowano: ${knownConfigs
-            .map((config) => config.serviceUuid)
-            .join(", ")}`,
+          `Połączono z ${device.name || "urządzeniem"}, ale nie znaleziono usługi UART. Upewnij się, że obroża jest włączona lub sprawdź Service UUID w Ustawieniach.`
         );
       }
 
       setConnected(true);
-      setDeviceName(device.name ?? "Obroża");
+      setDeviceName(device.name ?? "Obroża Pestka");
       setEscapedAlarm(false);
       startAutoDisconnect();
-      toast.success(`Połączono: ${device.name ?? "Obroża"}`);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : "Błąd połączenia";
-      toast.error(msg);
+      toast.success(`Połączono: ${device.name ?? "Obroża Pestka"}`);
+    } catch (err: any) {
+      if (err?.name === "NotFoundError" || err?.message?.includes("cancelled") || err?.message?.includes("canceled")) {
+        toast("Anulowano wybór urządzenia");
+      } else {
+        const msg = err instanceof Error ? err.message : "Błąd połączenia";
+        toast.error(msg, { duration: 6000 });
+      }
     } finally {
       setConnecting(false);
     }
@@ -336,7 +346,7 @@ export function useBle(): BleState {
   const v = useContext(Ctx);
   if (!v) {
     return {
-      supported: typeof navigator !== "undefined" && !!(navigator as AnyBT).bluetooth,
+      supported: typeof navigator !== "undefined" && !!(navigator as AnyBT)?.bluetooth,
       connected: false,
       connecting: false,
       deviceName: null,
