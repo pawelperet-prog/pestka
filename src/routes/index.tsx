@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
-import { Bluetooth, BatteryFull, Moon, Zap, Footprints } from "lucide-react";
+import { Bluetooth, BatteryFull, Moon, Zap, Footprints, Terminal } from "lucide-react";
 import { useBle, formatCountdown } from "@/lib/ble";
 import { loadHistory, type BarkEvent } from "@/lib/history";
 
@@ -62,7 +62,7 @@ function Dashboard() {
                 className="flex items-center justify-center gap-2 rounded-2xl bg-primary text-primary-foreground py-3.5 font-semibold active:scale-[0.98] transition-transform disabled:opacity-50 cursor-pointer"
               >
                 <Bluetooth size={20} />
-                {ble.connecting ? "Szukanie urządzeń..." : "Połącz z Obrożą (BLE)"}
+                {ble.connecting ? "Otwieranie okna Bluetooth..." : "Połącz z Obrożą (BLE)"}
               </button>
               <p className="text-[11px] leading-relaxed text-muted-foreground text-center pt-1">
                 Upewnij się, że Bluetooth w systemie Windows / telefonie jest włączony, a obroża wybudzona.
@@ -139,6 +139,20 @@ function Dashboard() {
           {ble.connected ? "Testuj Korektę" : "Połącz najpierw z obrożą"}
         </button>
       </section>
+
+      {/* BLE Console & Diagnostics */}
+      {ble.logs && ble.logs.length > 0 && (
+        <section className="card-surface space-y-2">
+          <h2 className="text-xs font-semibold flex items-center gap-1.5 text-muted-foreground">
+            <Terminal size={14} /> Logi Bluetooth
+          </h2>
+          <div className="bg-background/80 rounded-xl p-2.5 font-mono text-[11px] text-muted-foreground max-h-36 overflow-y-auto space-y-1">
+            {ble.logs.map((log, idx) => (
+              <div key={idx} className="leading-tight">{log}</div>
+            ))}
+          </div>
+        </section>
+      )}
     </div>
   );
 }
