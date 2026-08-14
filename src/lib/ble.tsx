@@ -45,7 +45,8 @@ export type BleState = {
   spacerOn: boolean;
   escapedAlarm: boolean;
   logs: string[];
-  connect: (showAll?: boolean) => Promise<void>;
+  browserInfo: string;
+  connect: () => Promise<void>;
   sleepCollar: () => Promise<void>;
   testCorrection: () => Promise<void>;
   setSpacer: (on: boolean) => Promise<void>;
@@ -92,6 +93,7 @@ export function saveBleConfig(config: BleUuidConfig) {
 
 export function BleProvider({ children }: { children: ReactNode }) {
   const [supported, setSupported] = useState(true);
+  const [browserInfo, setBrowserInfo] = useState("");
   const [connected, setConnected] = useState(false);
   const [connecting, setConnecting] = useState(false);
   const [deviceName, setDeviceName] = useState<string | null>(null);
@@ -109,17 +111,22 @@ export function BleProvider({ children }: { children: ReactNode }) {
 
   const addLog = useCallback((msg: string) => {
     console.log(`[Pestka BLE] ${msg}`);
-    setLogs((prev) => [`${new Date().toLocaleTimeString()} - ${msg}`, ...prev.slice(0, 19)]);
+    setLogs((prev) => [`${new Date().toLocaleTimeString()} - ${msg}`, ...prev.slice(0, 29)]);
   }, []);
 
   useEffect(() => {
-    const isBtSupported = typeof navigator !== "undefined" && !!(navigator as AnyBT)?.bluetooth;
-    setSupported(isBtSupported);
-    if (!isBtSupported) {
-      addLog("Web Bluetooth niedostępny w tej przeglądarce.");
-    } else {
-      addLog("Web Bluetooth gotowy.");
-    }
+    const isBt = typeof navigator !== "undefined" && !!(navigator as AnyBT)?.bluetooth;
+    setSupported(isBt);
+    const ua = typeof navigator !== "undefined" ? navigator.userAgent : "";
+    let bName = "Nieznana";
+    if (ua.includes("Edg/")) bName = "Microsoft Edge";
+    else if (ua.includes("Chrome/")) bName = "Google Chrome";
+    else if (ua.includes("Firefox/")) bName = "Mozilla Firefox (brak Web Bluetooth)";
+    else if (ua.includes("Safari/") && !ua.includes("Chrome")) bName = "Safari (brak Web Bluetooth)";
+    else if (ua.includes("Bluefy")) bName = "Bluefy (iOS BLE)";
+    
+    setBrowserInfo(`${bName} · Web Bluetooth: ${isBt ? "Dostępny ✅" : "Niedostępny ❌"}`);
+    addLog(`Inicjalizacja: ${bName} (Web Bluetooth: ${isBt ? "TAK" : "NIE"})`);
   }, [addLog]);
 
   const clearTimers = () => {
@@ -177,75 +184,63 @@ export function BleProvider({ children }: { children: ReactNode }) {
     }
   };
 
-  const connect = useCallback(async (_showAll = true) => {
+  const connect = useCallback(async () => {
     const bt = typeof navigator !== "undefined" ? (navigator as AnyBT)?.bluetooth : null;
     if (!bt) {
-      const msg = "Przeglądarka nie obsługuje Web Bluetooth! Użyj Chrome lub Edge na Windows, albo Bluefy na iPhone.";
-      addLog(`BŁĄD: ${msg}`);
-      toast.error(msg, { duration: 8000 });
+      const msg = "Przeglądarka NIE obsługuje Web Bluetooth! Na Windows otwórz stronę w Google Chrome lub Microsoft Edge. Na iPhone pobierz darmowe Bluefy z App Store.";
+      addLog(`❌ BŁĄD: ${msg}`);
+      alert(msg);
       return;
     }
 
-    addLog("Otwieranie okna wyboru Bluetooth...");
+    addLog("🟡 Otwieranie systemowego okna wyboru Bluetooth...");
     setConnecting(true);
-    try {
-      const savedConfig = loadBleConfig();
-      const serviceUuid = normalizeUuid(savedConfig.serviceUuid || SERVICE_UUID);
-      const txUuid = normalizeUuid(savedConfig.txUuid || TX_UUID);
-      const rxUuid = normalizeUuid(savedConfig.rxUuid || RX_UUID);
 
-      // Call requestDevice synchronously in user gesture
+    try {
+      // Direct requestDevice call
       const device = await bt.requestDevice({
         acceptAllDevices: true,
         optionalServices: [
-          serviceUuid,
           "6e400001-b5a3-f393-e0a9-e50e24dcca9e",
           "battery_service",
           "device_information",
         ],
       });
 
-      addLog(`Wybrano: ${device.name || "Nieznane urządzenie"}. Łączenie...`);
+      addLog(`✅ Wybrano urządzenie: "${device.name || "Nieznane"}". Łączenie z GATT...`);
       deviceRef.current = device;
       device.addEventListener("gattserverdisconnected", handleDisconnected);
 
       const server = await device.gatt.connect();
-      addLog("Połączono z serwerem GATT. Odkrywanie usług...");
+      addLog("✅ Połączono z GATT. Pobieranie usługi UART (6E400001...)...");
 
-      let txChar: AnyBT = null;
+      const service = await server.getPrimaryService("6e400001-b5a3-f393-e0a9-e50e24dcca9e");
+      const tx = await service.getCharacteristic("6e400002-b5a3-f393-e0a9-e50e24dcca9e");
+      txRef.current = tx;
+      addLog("✅ Znaleziono charakterystykę zapisu (RX/TX).");
 
       try {
-        const service = await server.getPrimaryService(serviceUuid);
-        txChar = await service.getCharacteristic(txUuid);
-        txRef.current = txChar;
-        try {
-          const rx = await service.getCharacteristic(rxUuid);
-          await rx.startNotifications();
-          rx.addEventListener("characteristicvaluechanged", onNotify);
-        } catch {
-          // RX optional
-        }
-      } catch (svcErr) {
-        addLog(`Próba usługi domyślnej 6E40...`);
-        const fallbackService = await server.getPrimaryService("6e400001-b5a3-f393-e0a9-e50e24dcca9e");
-        txChar = await fallbackService.getCharacteristic(TX_UUID);
-        txRef.current = txChar;
+        const rx = await service.getCharacteristic("6e400003-b5a3-f393-e0a9-e50e24dcca9e");
+        await rx.startNotifications();
+        rx.addEventListener("characteristicvaluechanged", onNotify);
+        addLog("✅ Włączono powiadomienia telemetryczne.");
+      } catch (e) {
+        addLog("ℹ️ Powiadomienia opcjonalne pominięte.");
       }
 
       setConnected(true);
       setDeviceName(device.name ?? "Obroża Pestka");
       setEscapedAlarm(false);
       startAutoDisconnect();
-      addLog(`Sukces: Połączono z ${device.name ?? "Obrożą"}`);
+      addLog(`🎉 SUKCES! Połączono pomyślnie z "${device.name ?? "Obroża Pestka"}"!`);
       toast.success(`Połączono: ${device.name ?? "Obroża Pestka"}`);
     } catch (err: any) {
       if (err?.name === "NotFoundError" || err?.message?.includes("cancelled") || err?.message?.includes("canceled")) {
-        addLog("Anulowano wybór urządzenia.");
-        toast("Anulowano wybór urządzenia");
+        addLog("ℹ️ Użytkownik zamknął okno wyboru.");
       } else {
-        const msg = err instanceof Error ? err.message : String(err);
-        addLog(`Błąd połączenia: ${msg}`);
-        toast.error(msg, { duration: 6000 });
+        const errMsg = err instanceof Error ? err.message : String(err);
+        addLog(`❌ BŁĄD POŁĄCZENIA: ${errMsg}`);
+        toast.error(`Błąd: ${errMsg}`, { duration: 8000 });
       }
     } finally {
       setConnecting(false);
@@ -275,7 +270,7 @@ export function BleProvider({ children }: { children: ReactNode }) {
   const sleepCollar = useCallback(async () => {
     const ok = await writeBytes([0x21]);
     if (ok) {
-      addLog("Wysłano komendę uśpienia (0x21)");
+      addLog("Wysłano uśpienie obroży (0x21)");
       toast("💤 Obroża uśpiona");
       try {
         deviceRef.current?.gatt?.disconnect();
@@ -288,7 +283,7 @@ export function BleProvider({ children }: { children: ReactNode }) {
   const testCorrection = useCallback(async () => {
     const ok = await writeBytes([0x24]);
     if (ok) {
-      addLog("Wysłano test korekty (0x24)");
+      addLog("Wysłano test korekty buzzerem (0x24)");
       toast.success("⚡ Test korekty wysłany");
     }
   }, [addLog, writeBytes]);
@@ -300,7 +295,7 @@ export function BleProvider({ children }: { children: ReactNode }) {
         spacerRef.current = on;
         setSpacerOn(on);
         if (!on) setEscapedAlarm(false);
-        addLog(`Tryb spaceru: ${on ? "Włączony" : "Wyłączony"}`);
+        addLog(`Tryb spaceru: ${on ? "WŁĄCZONY" : "WYŁĄCZONY"}`);
         toast(on ? "🚶 Tryb spaceru włączony" : "Tryb spaceru wyłączony");
       }
     },
@@ -321,6 +316,7 @@ export function BleProvider({ children }: { children: ReactNode }) {
     spacerOn,
     escapedAlarm,
     logs,
+    browserInfo,
     connect,
     sleepCollar,
     testCorrection,
@@ -344,6 +340,7 @@ export function useBle(): BleState {
       spacerOn: false,
       escapedAlarm: false,
       logs: [],
+      browserInfo: "",
       connect: async () => {},
       sleepCollar: async () => {},
       testCorrection: async () => {},

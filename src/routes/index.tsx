@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
-import { Bluetooth, BatteryFull, Moon, Zap, Footprints, Terminal } from "lucide-react";
+import { Bluetooth, BatteryFull, Moon, Zap, Footprints, Terminal, AlertTriangle } from "lucide-react";
 import { useBle, formatCountdown } from "@/lib/ble";
 import { loadHistory, type BarkEvent } from "@/lib/history";
 
@@ -30,8 +30,23 @@ function Dashboard() {
     <div className="space-y-4">
       <header className="pt-2 pb-1">
         <h1 className="text-2xl font-bold tracking-tight">Pestka Xense</h1>
-        <p className="text-sm text-muted-foreground">Inteligentna obroża antyszczekowa</p>
+        <p className="text-xs text-muted-foreground">{ble.browserInfo || "Sprawdzanie przeglądarki..."}</p>
       </header>
+
+      {!ble.supported && (
+        <div className="rounded-2xl border border-destructive/50 bg-destructive/10 p-3.5 text-xs text-destructive-foreground space-y-2">
+          <div className="flex items-center gap-2 font-bold text-destructive">
+            <AlertTriangle size={18} /> Brak Web Bluetooth w tej przeglądarce!
+          </div>
+          <p className="leading-relaxed text-muted-foreground">
+            Twoja aktualna przeglądarka (np. Firefox, Opera, zwykłe Safari) blokuje łączność Bluetooth.
+          </p>
+          <div className="bg-background/60 p-2.5 rounded-xl text-foreground font-mono text-[11px] space-y-1">
+            <div>👉 <b>Windows:</b> Otwórz stronę w <b>Google Chrome</b> lub <b>Microsoft Edge</b>.</div>
+            <div>👉 <b>iPhone (iOS):</b> Otwórz stronę w darmowej przeglądarce <b>Bluefy</b> z App Store.</div>
+          </div>
+        </div>
+      )}
 
       {/* Connection */}
       <section className="card-surface">
@@ -57,15 +72,16 @@ function Dashboard() {
           {!ble.connected ? (
             <div className="grid grid-cols-1 gap-2">
               <button
-                onClick={() => ble.connect(true)}
+                type="button"
+                onClick={() => ble.connect()}
                 disabled={ble.connecting}
-                className="flex items-center justify-center gap-2 rounded-2xl bg-primary text-primary-foreground py-3.5 font-semibold active:scale-[0.98] transition-transform disabled:opacity-50 cursor-pointer"
+                className="w-full flex items-center justify-center gap-2 rounded-2xl bg-primary text-primary-foreground py-4 font-bold text-base shadow-lg active:scale-[0.98] transition-all disabled:opacity-50 cursor-pointer"
               >
-                <Bluetooth size={20} />
-                {ble.connecting ? "Otwieranie okna Bluetooth..." : "Połącz z Obrożą (BLE)"}
+                <Bluetooth size={22} />
+                {ble.connecting ? "Wybierz urządzenie..." : "🔍 SZUKAJ OBROŻY (BLE)"}
               </button>
               <p className="text-[11px] leading-relaxed text-muted-foreground text-center pt-1">
-                Upewnij się, że Bluetooth w systemie Windows / telefonie jest włączony, a obroża wybudzona.
+                Kliknięcie otworzy okienko wyboru Bluetooth. Wybierz obrożę i kliknij <b>Paruj</b>.
               </p>
             </div>
           ) : (
@@ -141,18 +157,20 @@ function Dashboard() {
       </section>
 
       {/* BLE Console & Diagnostics */}
-      {ble.logs && ble.logs.length > 0 && (
-        <section className="card-surface space-y-2">
-          <h2 className="text-xs font-semibold flex items-center gap-1.5 text-muted-foreground">
-            <Terminal size={14} /> Logi Bluetooth
-          </h2>
-          <div className="bg-background/80 rounded-xl p-2.5 font-mono text-[11px] text-muted-foreground max-h-36 overflow-y-auto space-y-1">
-            {ble.logs.map((log, idx) => (
+      <section className="card-surface space-y-2">
+        <h2 className="text-xs font-semibold flex items-center gap-1.5 text-muted-foreground">
+          <Terminal size={14} /> Logi i diagnostyka BLE
+        </h2>
+        <div className="bg-background/90 border border-border/40 rounded-xl p-3 font-mono text-[11px] text-muted-foreground max-h-48 overflow-y-auto space-y-1">
+          {ble.logs && ble.logs.length > 0 ? (
+            ble.logs.map((log, idx) => (
               <div key={idx} className="leading-tight">{log}</div>
-            ))}
-          </div>
-        </section>
-      )}
+            ))
+          ) : (
+            <div>Oczekiwanie na akcję użytkownika...</div>
+          )}
+        </div>
+      </section>
     </div>
   );
 }
