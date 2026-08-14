@@ -1,89 +1,181 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
-import { Bluetooth, BatteryFull, Moon, Zap, Footprints, Terminal } from "lucide-react";
-import { useBle, formatCountdown, loadBleConfig, SERVICE_UUID } from "@/lib/ble";
-import { loadHistory, type BarkEvent } from "@/lib/history";
+import { useRef, useState } from "react";
+import {
+  Bluetooth, BatteryFull, Moon, Zap, Footprints, Terminal,
+} from "lucide-react";
+import { toast } from "sonner";
 
 export const Route = createFileRoute("/")({
   head: () => ({
     meta: [
       { title: "Pestka Xense — Dashboard" },
-      { name: "description", content: "Połącz się z obrożą Pestka przez Bluetooth." },
+      { name: "description", content: "Połącz z obrożą Pestka przez Bluetooth." },
     ],
   }),
   component: Dashboard,
 });
 
-// ─── HANDLE CLICK ─────────────────────────────────────────────────────────────
-// requestDevice MUSI być pierwszą asynchroniczną akcją po kliknięciu.
-// Dlatego wywołujemy je tutaj bezpośrednio, a nie przez kontekst.
+// UUIDs z firmware (NimBLE UART)
+const SVC  = "6e400001-b5a3-f393-e0a9-e50e24dcca9e";
+const TXCH = "6e400002-b5a3-f393-e0a9-e50e24dcca9e"; // app WRITE → collar
+const RXCH = "6e400003-b5a3-f393-e0a9-e50e24dcca9e"; // collar NOTIFY → app
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-type AnyBT = any;
+type BT = any;
 
 function Dashboard() {
-  const ble = useBle();
-  const [history, setHistory] = useState<BarkEvent[]>([]);
+  const [status,     setStatus]     = useState<"idle"|"picking"|"connecting"|"connected">("idle");
+  const [devName,    setDevName]    = useState("");
+  const [battery,    setBattery]    = useState<number|null>(null);
+  const [spacerOn,   setSpacerOn]   = useState(false);
+  const [logs,       setLogs]       = useState<string[]>(["Gotowy."]);
 
-  useEffect(() => { setHistory(loadHistory()); }, []);
+  const txRef  = useRef<BT>(null);
+  const devRef = useRef<BT>(null);
 
-  const now    = Math.floor(Date.now() / 1000);
-  const last10h = history.filter(e => e.is_bark === 1 && now - e.timestamp < 10 * 3600).length;
-  const lastBark = history.find(e => e.is_bark === 1);
+  function log(msg: string) {
+    console.log("[BLE]", msg);
+    setLogs(p => [`${new Date().toLocaleTimeString()} ${msg}`, ...p.slice(0, 79)]);
+  }
 
-  // ─── DIRECT BLE CONNECT ───────────────────────────────────────────────────
-  function handleConnect() {
-    const bt = (navigator as AnyBT)?.bluetooth;
+  async function writeCmd(bytes: number[]) {
+    if (!txRef.current) { toast.error("Nie połączono"); return; }
+    try {
+      const buf = new Uint8Array(bytes);
+      if (txRef.current.writeValueWithoutResponse) await txRef.current.writeValueWithoutResponse(buf);
+      else await txRef.current.writeValue(buf);
+    } catch (e: BT) { toast.error("Błąd: " + e?.message); }
+  }
 
+  function onDisconnect() {
+    log("🔴 Rozłączono");
+    setStatus("idle"); setDevName(""); setBattery(null); setSpacerOn(false);
+    txRef.current = null;
+    toast("Rozłączono z obrożą");
+  }
+
+  function onNotify(e: Event) {
+    try {
+      const v = (e.target as BT).value as DataView;
+      const t = new TextDecoder().decode(v.buffer);
+      const m = t.match(/vbat[=:]?\s*([\d.]+)/i) || t.match(/([\d]+\.[\d]{1,3})/);
+      if (m) { const n = parseFloat(m[1]); if (n > 2 && n < 5.5) setBattery(n); }
+    } catch { /**/ }
+  }
+
+  // ─── CONNECT: requestDevice wywołane jako PIERWSZA linia (user gesture) ──
+  async function handleConnect() {
+    const bt: BT = (navigator as BT).bluetooth;
     if (!bt) {
-      ble.addLog("❌ navigator.bluetooth = undefined");
-      alert(
-        "Twoja przeglądarka NIE obsługuje Web Bluetooth!\n\n" +
-        "• Windows: otwórz w Google Chrome lub Microsoft Edge\n" +
-        "• iPhone: otwórz w aplikacji Bluefy (App Store)"
-      );
+      alert("Web Bluetooth niedostępny!\n\n• Windows/Android → Google Chrome lub Edge\n• iPhone → aplikacja Bluefy (App Store)");
       return;
     }
 
-    ble.addLog("🔵 Wywołuję requestDevice...");
-    ble.setConnectingState(true);
+    // KROK 1: Picker — MUST być pierwszą asynchroniczną operacją po kliknięciu
+    setStatus("picking");
+    log("📡 Otwieram picker BLE...");
 
-    const cfg = loadBleConfig();
-    const svcUuid = cfg.serviceUuid || SERVICE_UUID;
-
-    // requestDevice musi być wywołane NATYCHMIAST — bez żadnych await przed nim
-    bt.requestDevice({
-      filters: [
-        { services: [svcUuid] },
-        { namePrefix: "PESTKA" },
-        { namePrefix: "Pestka" },
-        { namePrefix: "pestka" },
-      ],
-      optionalServices: [svcUuid, "battery_service"],
-    })
-    .catch((e: AnyBT) => {
-      // iOS: filter error → retry z acceptAllDevices
-      if (e?.name === "NotFoundError" || e?.message?.toLowerCase().includes("cancel")) throw e;
-      ble.addLog(`⚠️ Filter failed (${e?.message}) → próba acceptAllDevices`);
-      return bt.requestDevice({
-        acceptAllDevices: true,
-        optionalServices: [svcUuid, "battery_service"],
+    let device: BT;
+    try {
+      device = await bt.requestDevice({
+        filters: [
+          { services: [SVC] },
+          { namePrefix: "PESTKA" },
+          { namePrefix: "Pestka" },
+          { namePrefix: "pestka" },
+        ],
+        optionalServices: [SVC, "battery_service"],
       });
-    })
-    .then((device: AnyBT) => {
-      ble.addLog(`✅ Wybrano: "${device.name || "Nieznane"}"`);
-      return ble.connectDevice(device);
-    })
-    .catch((e: AnyBT) => {
-      ble.setConnectingState(false);
-      if (e?.name === "NotFoundError" || e?.message?.toLowerCase().includes("cancel")) {
-        ble.addLog("ℹ️ Anulowano wybór.");
-      } else {
-        ble.addLog(`❌ Błąd: ${e?.message ?? e}`);
-        toast_error(`Błąd: ${e?.message ?? e}`);
+      log(`✅ Wybrano: "${device.name}"`);
+    } catch (e: BT) {
+      if (e?.name === "NotFoundError" || String(e?.message).toLowerCase().includes("cancel")) {
+        log("ℹ️ Anulowano picker.");
+        setStatus("idle"); return;
       }
-    })
-    .finally(() => ble.setConnectingState(false));
+      // Fallback: acceptAllDevices (desktop Chrome bez filtrów)
+      log(`⚠️ Filter error (${e?.message}) → acceptAllDevices`);
+      try {
+        device = await bt.requestDevice({
+          acceptAllDevices: true,
+          optionalServices: [SVC, "battery_service"],
+        });
+        log(`✅ Wybrano (fallback): "${device.name}"`);
+      } catch (e2: BT) {
+        log(`❌ Picker błąd: ${e2?.message}`);
+        toast.error("Nie można wybrać urządzenia: " + e2?.message);
+        setStatus("idle"); return;
+      }
+    }
+
+    // KROK 2: GATT connect
+    setStatus("connecting");
+    log("🔵 Łączę GATT...");
+    devRef.current = device;
+    device.addEventListener("gattserverdisconnected", onDisconnect);
+
+    try {
+      const server = await device.gatt.connect();
+      log("✅ GATT OK. Szukam usługi UART...");
+
+      const svc = await server.getPrimaryService(SVC);
+      log("✅ Usługa UART znaleziona. Pobieram TX...");
+
+      const tx = await svc.getCharacteristic(TXCH);
+      txRef.current = tx;
+      log("✅ TX (zapis) gotowy.");
+
+      // RX notify (opcjonalne — telemetria baterii)
+      try {
+        const rx = await svc.getCharacteristic(RXCH);
+        await rx.startNotifications();
+        rx.addEventListener("characteristicvaluechanged", onNotify);
+        log("✅ RX (telemetria) aktywna.");
+      } catch (rxErr: BT) {
+        log(`ℹ️ RX pominięty (${rxErr?.message})`);
+      }
+
+      setStatus("connected");
+      setDevName(device.name || "Obroża Pestka");
+      log(`🎉 POŁĄCZONO z "${device.name}"!`);
+      toast.success(`Połączono: ${device.name || "Obroża"}`);
+
+    } catch (err: BT) {
+      log(`❌ GATT BŁĄD: ${err?.message ?? err}`);
+      toast.error(`Błąd połączenia GATT: ${err?.message ?? err}`, { duration: 10000 });
+      setStatus("idle");
+      try { device?.gatt?.disconnect(); } catch { /**/ }
+    }
   }
+
+  async function handleSleep() {
+    await writeCmd([0x21]);
+    log("💤 Uśpienie (0x21)");
+    toast("💤 Obroża uśpiona");
+    try { devRef.current?.gatt?.disconnect(); } catch { /**/ }
+  }
+
+  async function handleTest() {
+    await writeCmd([0x24]);
+    log("⚡ Test korekty (0x24)");
+    toast.success("⚡ Test wysłany");
+  }
+
+  async function handleSpacer(on: boolean) {
+    await writeCmd([0x20, on ? 1 : 0]);
+    setSpacerOn(on);
+    log(`🚶 Spacer: ${on ? "ON" : "OFF"}`);
+    toast(on ? "🚶 Tryb spaceru aktywny" : "Tryb spaceru wyłączony");
+  }
+
+  const connected  = status === "connected";
+  const picking    = status === "picking";
+  const connecting = status === "connecting";
+  const busy       = picking || connecting;
+
+  // Przelicz % baterii (3.3V = 0%, 4.2V = 100%)
+  const battPct = battery !== null
+    ? Math.round(Math.min(100, Math.max(0, ((battery - 3.3) / (4.2 - 3.3)) * 100)))
+    : null;
 
   return (
     <div className="space-y-4">
@@ -92,47 +184,47 @@ function Dashboard() {
         <p className="text-xs text-muted-foreground">Inteligentna obroża antyszczekowa</p>
       </header>
 
-      {/* Connection card */}
+      {/* Status + Connect */}
       <section className="card-surface">
         <div className="flex items-center gap-3">
           <span
-            className={`status-dot ${ble.connected ? "bg-success" : "bg-destructive"}`}
-            style={ble.connected ? { boxShadow: "0 0 0 4px color-mix(in oklab, var(--color-success) 25%, transparent)" } : undefined}
+            className={`status-dot ${connected ? "bg-success" : "bg-destructive"}`}
+            style={connected ? { boxShadow: "0 0 0 5px color-mix(in oklab, var(--color-success) 20%, transparent)" } : undefined}
           />
-          <div className="flex-1">
-            <div className="font-semibold">{ble.connected ? ble.deviceName : "Brak połączenia"}</div>
+          <div className="flex-1 min-w-0">
+            <div className="font-semibold truncate">{connected ? devName : "Brak połączenia"}</div>
             <div className="text-xs text-muted-foreground">
-              {ble.connected ? `BLE aktywne · ${formatCountdown(ble.countdownMs)}` : "Obroża rozłączona"}
+              {picking ? "⏳ Otwieranie okna wyboru..." : connecting ? "⏳ Łączenie GATT..." : connected ? "BLE aktywne" : "Obroża rozłączona"}
             </div>
           </div>
-          {ble.battery !== null && (
-            <div className="flex items-center gap-1 text-sm text-muted-foreground">
-              <BatteryFull size={16} /> {ble.battery.toFixed(2)}V
+          {battPct !== null && (
+            <div className="flex items-center gap-1 text-sm font-semibold">
+              <BatteryFull size={16} className={battPct > 30 ? "text-success" : "text-destructive"} />
+              {battPct}%
             </div>
           )}
         </div>
 
-        <div className="mt-4">
-          {!ble.connected ? (
-            <div className="space-y-2">
-              {/* BEZPOŚREDNI onClick — requestDevice wywoływany natychmiast po kliknięciu */}
+        <div className="mt-4 space-y-2">
+          {!connected ? (
+            <>
               <button
                 type="button"
                 onClick={handleConnect}
-                disabled={ble.connecting}
-                className="w-full flex items-center justify-center gap-2 rounded-2xl bg-primary text-primary-foreground py-4 font-bold text-base shadow-lg active:scale-[0.98] transition-all disabled:opacity-50"
+                disabled={busy}
+                className="w-full flex items-center justify-center gap-2 rounded-2xl bg-primary text-primary-foreground py-4 font-bold text-base shadow-lg active:scale-[0.98] transition-all disabled:opacity-60"
               >
                 <Bluetooth size={22} />
-                {ble.connecting ? "Wybierz urządzenie..." : "🔍 Połącz z Obrożą (BLE)"}
+                {picking ? "Wybierz urządzenie w oknie..." : connecting ? "Łączenie..." : "🔍 Połącz z Obrożą (BLE)"}
               </button>
               <p className="text-[11px] text-muted-foreground text-center">
-                Chrome / Edge na Windows · Bluefy na iPhone
+                Chrome / Edge (Windows) · Bluefy (iPhone)
               </p>
-            </div>
+            </>
           ) : (
             <button
               type="button"
-              onClick={ble.sleepCollar}
+              onClick={handleSleep}
               className="w-full flex items-center justify-center gap-2 rounded-2xl bg-secondary text-secondary-foreground py-3 font-semibold"
             >
               <Moon size={18} /> 💤 Uśpij Obrożę
@@ -141,46 +233,27 @@ function Dashboard() {
         </div>
       </section>
 
-      {/* Spacer Mode */}
-      <section className={`card-surface ${ble.spacerOn ? "border-warning/60" : ""}`}>
+      {/* Spacer */}
+      <section className={`card-surface ${spacerOn ? "border-warning/60" : ""}`}>
         <div className="flex items-start gap-3">
           <Footprints className="text-warning mt-1" size={22} />
           <div className="flex-1">
             <h2 className="font-semibold">🚶 Tryb Spaceru</h2>
-            <p className="text-xs text-muted-foreground mt-1">Gdy pies ucieknie i zerwie BLE, obroża zacznie pikać.</p>
+            <p className="text-xs text-muted-foreground mt-1">
+              Gdy pies ucieknie i zerwie BLE, obroża zacznie pikać.
+            </p>
           </div>
         </div>
         <button
           type="button"
-          onClick={() => ble.setSpacer(!ble.spacerOn)}
-          disabled={!ble.connected}
+          onClick={() => handleSpacer(!spacerOn)}
+          disabled={!connected}
           className={`mt-4 w-full rounded-2xl py-3 font-semibold disabled:opacity-40 transition-colors ${
-            ble.spacerOn ? "bg-destructive text-destructive-foreground" : "bg-success text-background"
+            spacerOn ? "bg-destructive text-destructive-foreground" : "bg-success text-background"
           }`}
         >
-          {ble.spacerOn ? "Zakończ Spacer" : "Rozpocznij Spacer"}
+          {spacerOn ? "Zakończ Spacer" : "Rozpocznij Spacer"}
         </button>
-      </section>
-
-      {/* Stats */}
-      <section className="card-surface">
-        <h2 className="font-semibold mb-3">📊 Statystyki</h2>
-        <ul className="space-y-2 text-sm">
-          <li className="flex justify-between">
-            <span className="text-muted-foreground">Ostatnie 10h</span>
-            <span className="font-semibold">{last10h} szczekań</span>
-          </li>
-          <li className="flex justify-between">
-            <span className="text-muted-foreground">🔋 Bateria</span>
-            <span className="font-semibold">{ble.battery !== null ? `${ble.battery.toFixed(2)} V` : "—"}</span>
-          </li>
-          <li className="flex justify-between">
-            <span className="text-muted-foreground">📅 Ostatnie szczekanie</span>
-            <span className="font-semibold">
-              {lastBark ? new Date(lastBark.timestamp * 1000).toLocaleTimeString("pl-PL", { hour: "2-digit", minute: "2-digit" }) : "—"}
-            </span>
-          </li>
-        </ul>
       </section>
 
       {/* Test korekty */}
@@ -194,29 +267,23 @@ function Dashboard() {
         </div>
         <button
           type="button"
-          onClick={ble.testCorrection}
-          disabled={!ble.connected}
+          onClick={handleTest}
+          disabled={!connected}
           className="mt-4 w-full rounded-2xl bg-destructive text-destructive-foreground py-3 font-semibold disabled:opacity-40"
         >
-          {ble.connected ? "Testuj Korektę" : "Połącz najpierw z obrożą"}
+          {connected ? "Testuj Korektę" : "Najpierw połącz z obrożą"}
         </button>
       </section>
 
-      {/* BLE Logs */}
+      {/* Diagnostyka */}
       <section className="card-surface space-y-2">
         <h2 className="text-xs font-semibold flex items-center gap-1.5 text-muted-foreground">
           <Terminal size={13} /> Diagnostyka BLE
         </h2>
-        <div className="bg-black/40 rounded-xl p-3 font-mono text-[11px] text-green-400 max-h-48 overflow-y-auto space-y-0.5">
-          {ble.logs.map((l, i) => <div key={i}>{l}</div>)}
+        <div className="bg-black/40 rounded-xl p-3 font-mono text-[11px] text-green-400 max-h-52 overflow-y-auto space-y-0.5">
+          {logs.map((l, i) => <div key={i}>{l}</div>)}
         </div>
       </section>
     </div>
   );
-}
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function toast_error(msg: string) {
-  // Dynamic import to avoid top-level sonner import issues
-  import("sonner").then(m => m.toast.error(msg, { duration: 8000 })).catch(() => alert(msg));
 }
