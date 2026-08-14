@@ -73,12 +73,12 @@ function Dashboard() {
             <div className="grid grid-cols-1 gap-2">
               <button
                 type="button"
-                onClick={() => ble.connect()}
+                onClick={ble.connect}
                 disabled={ble.connecting}
                 className="w-full flex items-center justify-center gap-2 rounded-2xl bg-primary text-primary-foreground py-4 font-bold text-base shadow-lg active:scale-[0.98] transition-all disabled:opacity-50 cursor-pointer"
               >
                 <Bluetooth size={22} />
-                {ble.connecting ? "Wybierz urządzenie..." : "🔍 SZUKAJ OBROŻY (BLE)"}
+                {ble.connecting ? "Wybierz urządzenie w oknie..." : "🔍 SZUKAJ OBROŻY (BLE)"}
               </button>
               <p className="text-[11px] leading-relaxed text-muted-foreground text-center pt-1">
                 Kliknięcie otworzy okienko wyboru Bluetooth. Wybierz obrożę i kliknij <b>Paruj</b>.
