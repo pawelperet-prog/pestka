@@ -111,22 +111,22 @@ export function BleProvider({ children }: { children: ReactNode }) {
 
   const addLog = useCallback((msg: string) => {
     console.log(`[Pestka BLE] ${msg}`);
-    setLogs((prev) => [`${new Date().toLocaleTimeString()} - ${msg}`, ...prev.slice(0, 29)]);
+    setLogs((prev) => [`${new Date().toLocaleTimeString()} - ${msg}`, ...prev.slice(0, 39)]);
   }, []);
 
   useEffect(() => {
     const isBt = typeof navigator !== "undefined" && !!(navigator as AnyBT)?.bluetooth;
     setSupported(isBt);
     const ua = typeof navigator !== "undefined" ? navigator.userAgent : "";
-    let bName = "Nieznana";
-    if (ua.includes("Edg/")) bName = "Microsoft Edge";
+    let bName = "Przeglądarka Web";
+    if (ua.includes("Bluefy")) bName = "Bluefy (iOS)";
+    else if (ua.includes("Edg/")) bName = "Microsoft Edge";
     else if (ua.includes("Chrome/")) bName = "Google Chrome";
-    else if (ua.includes("Firefox/")) bName = "Mozilla Firefox (brak Web Bluetooth)";
-    else if (ua.includes("Safari/") && !ua.includes("Chrome")) bName = "Safari (brak Web Bluetooth)";
-    else if (ua.includes("Bluefy")) bName = "Bluefy (iOS BLE)";
+    else if (ua.includes("Firefox/")) bName = "Mozilla Firefox";
+    else if (ua.includes("Safari/") && !ua.includes("Chrome")) bName = "Safari";
     
-    setBrowserInfo(`${bName} · Web Bluetooth: ${isBt ? "Dostępny ✅" : "Niedostępny ❌"}`);
-    addLog(`Inicjalizacja: ${bName} (Web Bluetooth: ${isBt ? "TAK" : "NIE"})`);
+    setBrowserInfo(`${bName} | BLE: ${isBt ? "Wspierany ✅" : "Niewspierany ❌"}`);
+    addLog(`Gotowość: ${bName} | navigator.bluetooth = ${isBt ? "OK" : "BRAK"}`);
   }, [addLog]);
 
   const clearTimers = () => {
@@ -143,7 +143,7 @@ export function BleProvider({ children }: { children: ReactNode }) {
     setCountdownMs(0);
     clearTimers();
     txRef.current = null;
-    addLog("Rozłączono z urządzeniem.");
+    addLog("🔴 Rozłączono z obrożą.");
     if (spacerRef.current) {
       setEscapedAlarm(true);
     } else {
@@ -185,62 +185,94 @@ export function BleProvider({ children }: { children: ReactNode }) {
   };
 
   const connect = useCallback(async () => {
+    addLog("🟡 Kliknięto przycisk połączenia.");
     const bt = typeof navigator !== "undefined" ? (navigator as AnyBT)?.bluetooth : null;
     if (!bt) {
-      const msg = "Przeglądarka NIE obsługuje Web Bluetooth! Na Windows otwórz stronę w Google Chrome lub Microsoft Edge. Na iPhone pobierz darmowe Bluefy z App Store.";
-      addLog(`❌ BŁĄD: ${msg}`);
+      const msg = "Przeglądarka NIE obsługuje Web Bluetooth! Na iPhone otwórz w Bluefy z App Store. Na Windows użyj Chrome/Edge.";
+      addLog(`❌ ${msg}`);
       alert(msg);
       return;
     }
 
-    addLog("🟡 Otwieranie systemowego okna wyboru Bluetooth...");
     setConnecting(true);
+    let device: AnyBT = null;
 
     try {
-      // Direct requestDevice call
-      const device = await bt.requestDevice({
-        acceptAllDevices: true,
-        optionalServices: [
-          "6e400001-b5a3-f393-e0a9-e50e24dcca9e",
-          "battery_service",
-          "device_information",
-        ],
-      });
+      addLog("🟡 Otwieranie okna wyboru Bluetooth...");
+      
+      // Strategy 1: filters (Required by iOS CoreBluetooth / Bluefy)
+      try {
+        device = await bt.requestDevice({
+          filters: [
+            { services: ["6e400001-b5a3-f393-e0a9-e50e24dcca9e"] },
+            { namePrefix: "PESTKA" },
+            { namePrefix: "Pestka" },
+            { namePrefix: "pestka" },
+            { namePrefix: "ESP32" },
+          ],
+          optionalServices: [
+            "6e400001-b5a3-f393-e0a9-e50e24dcca9e",
+            "battery_service",
+            "device_information",
+          ],
+        });
+      } catch (filterErr: any) {
+        if (filterErr?.name === "NotFoundError" || filterErr?.message?.includes("cancelled") || filterErr?.message?.includes("canceled")) {
+          throw filterErr;
+        }
+        addLog(`ℹ️ Próba filtru nie powiodła się (${filterErr?.message}), próba acceptAllDevices...`);
+        // Strategy 2: acceptAllDevices (for Desktop Chrome/Edge where device doesn't advertise service UUID)
+        device = await bt.requestDevice({
+          acceptAllDevices: true,
+          optionalServices: [
+            "6e400001-b5a3-f393-e0a9-e50e24dcca9e",
+            "battery_service",
+            "device_information",
+          ],
+        });
+      }
 
-      addLog(`✅ Wybrano urządzenie: "${device.name || "Nieznane"}". Łączenie z GATT...`);
+      addLog(`✅ Wybrano urządzenie: "${device.name || "Nieznane"}". Łączenie GATT...`);
       deviceRef.current = device;
       device.addEventListener("gattserverdisconnected", handleDisconnected);
 
       const server = await device.gatt.connect();
-      addLog("✅ Połączono z GATT. Pobieranie usługi UART (6E400001...)...");
+      addLog("✅ Połączono z serwerem GATT. Odkrywanie usług...");
 
-      const service = await server.getPrimaryService("6e400001-b5a3-f393-e0a9-e50e24dcca9e");
+      let service: AnyBT = null;
+      try {
+        service = await server.getPrimaryService("6e400001-b5a3-f393-e0a9-e50e24dcca9e");
+      } catch (svcErr: any) {
+        addLog(`❌ Błąd pobierania usługi 6E40: ${svcErr?.message}`);
+        throw new Error(`Nie znaleziono usługi UART w urządzeniu ${device.name}. Sprawdź czy to obroża.`);
+      }
+
       const tx = await service.getCharacteristic("6e400002-b5a3-f393-e0a9-e50e24dcca9e");
       txRef.current = tx;
-      addLog("✅ Znaleziono charakterystykę zapisu (RX/TX).");
+      addLog("✅ Znaleziono port zapisu (0x6E400002).");
 
       try {
         const rx = await service.getCharacteristic("6e400003-b5a3-f393-e0a9-e50e24dcca9e");
         await rx.startNotifications();
         rx.addEventListener("characteristicvaluechanged", onNotify);
-        addLog("✅ Włączono powiadomienia telemetryczne.");
-      } catch (e) {
-        addLog("ℹ️ Powiadomienia opcjonalne pominięte.");
+        addLog("✅ Włączono odczyt telemetryczny.");
+      } catch (rxErr: any) {
+        addLog(`ℹ️ Opcjonalny odczyt powiadomień: ${rxErr?.message}`);
       }
 
       setConnected(true);
       setDeviceName(device.name ?? "Obroża Pestka");
       setEscapedAlarm(false);
       startAutoDisconnect();
-      addLog(`🎉 SUKCES! Połączono pomyślnie z "${device.name ?? "Obroża Pestka"}"!`);
+      addLog(`🎉 Sukces: Połączono z ${device.name ?? "Obroża"}!`);
       toast.success(`Połączono: ${device.name ?? "Obroża Pestka"}`);
     } catch (err: any) {
       if (err?.name === "NotFoundError" || err?.message?.includes("cancelled") || err?.message?.includes("canceled")) {
-        addLog("ℹ️ Użytkownik zamknął okno wyboru.");
+        addLog("ℹ️ Anulowano wybór urządzenia.");
       } else {
         const errMsg = err instanceof Error ? err.message : String(err);
-        addLog(`❌ BŁĄD POŁĄCZENIA: ${errMsg}`);
-        toast.error(`Błąd: ${errMsg}`, { duration: 8000 });
+        addLog(`❌ BŁĄD: ${errMsg}`);
+        alert(`Błąd połączenia BLE:\n${errMsg}`);
       }
     } finally {
       setConnecting(false);
@@ -270,7 +302,7 @@ export function BleProvider({ children }: { children: ReactNode }) {
   const sleepCollar = useCallback(async () => {
     const ok = await writeBytes([0x21]);
     if (ok) {
-      addLog("Wysłano uśpienie obroży (0x21)");
+      addLog("Wysłano uśpienie (0x21)");
       toast("💤 Obroża uśpiona");
       try {
         deviceRef.current?.gatt?.disconnect();
@@ -283,7 +315,7 @@ export function BleProvider({ children }: { children: ReactNode }) {
   const testCorrection = useCallback(async () => {
     const ok = await writeBytes([0x24]);
     if (ok) {
-      addLog("Wysłano test korekty buzzerem (0x24)");
+      addLog("Wysłano test korekty (0x24)");
       toast.success("⚡ Test korekty wysłany");
     }
   }, [addLog, writeBytes]);
