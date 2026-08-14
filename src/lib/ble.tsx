@@ -258,7 +258,17 @@ export function BleProvider({ children }: { children: ReactNode }) {
 
 export function useBle(): BleState {
   const ctx = useContext(Ctx);
-  if (!ctx) throw new Error("useBle must be used within BleProvider");
+  if (!ctx) {
+    // Safe fallback — should not happen if BleProvider wraps the app
+    return {
+      supported: false, connected: false, connecting: false,
+      deviceName: null, battery: null, countdownMs: 0,
+      spacerOn: false, escapedAlarm: false,
+      logs: ["BleProvider nie załadowany..."], browserInfo: "",
+      connect: () => {}, sleepCollar: () => {}, testCorrection: () => {},
+      setSpacer: () => {}, dismissAlarm: () => {},
+    };
+  }
   return ctx;
 }
 
