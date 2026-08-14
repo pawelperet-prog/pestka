@@ -1,58 +1,102 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
-import { Bluetooth, BatteryFull, Moon, Zap, Footprints, Terminal, AlertTriangle } from "lucide-react";
-import { useBle, formatCountdown } from "@/lib/ble";
+import { Bluetooth, BatteryFull, Moon, Zap, Footprints, Terminal } from "lucide-react";
+import { useBle, formatCountdown, loadBleConfig, SERVICE_UUID } from "@/lib/ble";
 import { loadHistory, type BarkEvent } from "@/lib/history";
 
 export const Route = createFileRoute("/")({
   head: () => ({
     meta: [
       { title: "Pestka Xense — Dashboard" },
-      { name: "description", content: "Połącz się z obrożą i steruj trybem spaceru." },
+      { name: "description", content: "Połącz się z obrożą Pestka przez Bluetooth." },
     ],
   }),
   component: Dashboard,
 });
 
+// ─── HANDLE CLICK ─────────────────────────────────────────────────────────────
+// requestDevice MUSI być pierwszą asynchroniczną akcją po kliknięciu.
+// Dlatego wywołujemy je tutaj bezpośrednio, a nie przez kontekst.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type AnyBT = any;
+
 function Dashboard() {
   const ble = useBle();
   const [history, setHistory] = useState<BarkEvent[]>([]);
 
-  useEffect(() => {
-    setHistory(loadHistory());
-  }, []);
+  useEffect(() => { setHistory(loadHistory()); }, []);
 
-  const now = Math.floor(Date.now() / 1000);
-  const last10h = history.filter((e) => e.is_bark === 1 && now - e.timestamp < 10 * 3600).length;
-  const lastBark = history.find((e) => e.is_bark === 1);
+  const now    = Math.floor(Date.now() / 1000);
+  const last10h = history.filter(e => e.is_bark === 1 && now - e.timestamp < 10 * 3600).length;
+  const lastBark = history.find(e => e.is_bark === 1);
+
+  // ─── DIRECT BLE CONNECT ───────────────────────────────────────────────────
+  function handleConnect() {
+    const bt = (navigator as AnyBT)?.bluetooth;
+
+    if (!bt) {
+      ble.addLog("❌ navigator.bluetooth = undefined");
+      alert(
+        "Twoja przeglądarka NIE obsługuje Web Bluetooth!\n\n" +
+        "• Windows: otwórz w Google Chrome lub Microsoft Edge\n" +
+        "• iPhone: otwórz w aplikacji Bluefy (App Store)"
+      );
+      return;
+    }
+
+    ble.addLog("🔵 Wywołuję requestDevice...");
+    ble.setConnectingState(true);
+
+    const cfg = loadBleConfig();
+    const svcUuid = cfg.serviceUuid || SERVICE_UUID;
+
+    // requestDevice musi być wywołane NATYCHMIAST — bez żadnych await przed nim
+    bt.requestDevice({
+      filters: [
+        { services: [svcUuid] },
+        { namePrefix: "PESTKA" },
+        { namePrefix: "Pestka" },
+        { namePrefix: "pestka" },
+      ],
+      optionalServices: [svcUuid, "battery_service"],
+    })
+    .catch((e: AnyBT) => {
+      // iOS: filter error → retry z acceptAllDevices
+      if (e?.name === "NotFoundError" || e?.message?.toLowerCase().includes("cancel")) throw e;
+      ble.addLog(`⚠️ Filter failed (${e?.message}) → próba acceptAllDevices`);
+      return bt.requestDevice({
+        acceptAllDevices: true,
+        optionalServices: [svcUuid, "battery_service"],
+      });
+    })
+    .then((device: AnyBT) => {
+      ble.addLog(`✅ Wybrano: "${device.name || "Nieznane"}"`);
+      return ble.connectDevice(device);
+    })
+    .catch((e: AnyBT) => {
+      ble.setConnectingState(false);
+      if (e?.name === "NotFoundError" || e?.message?.toLowerCase().includes("cancel")) {
+        ble.addLog("ℹ️ Anulowano wybór.");
+      } else {
+        ble.addLog(`❌ Błąd: ${e?.message ?? e}`);
+        toast_error(`Błąd: ${e?.message ?? e}`);
+      }
+    })
+    .finally(() => ble.setConnectingState(false));
+  }
 
   return (
     <div className="space-y-4">
       <header className="pt-2 pb-1">
         <h1 className="text-2xl font-bold tracking-tight">Pestka Xense</h1>
-        <p className="text-xs text-muted-foreground">{ble.browserInfo || "Sprawdzanie przeglądarki..."}</p>
+        <p className="text-xs text-muted-foreground">Inteligentna obroża antyszczekowa</p>
       </header>
 
-      {!ble.supported && (
-        <div className="rounded-2xl border border-destructive/50 bg-destructive/10 p-3.5 text-xs text-destructive-foreground space-y-2">
-          <div className="flex items-center gap-2 font-bold text-destructive">
-            <AlertTriangle size={18} /> Brak Web Bluetooth w tej przeglądarce!
-          </div>
-          <p className="leading-relaxed text-muted-foreground">
-            Twoja aktualna przeglądarka (np. Firefox, Opera, zwykłe Safari) blokuje łączność Bluetooth.
-          </p>
-          <div className="bg-background/60 p-2.5 rounded-xl text-foreground font-mono text-[11px] space-y-1">
-            <div>👉 <b>Windows:</b> Otwórz stronę w <b>Google Chrome</b> lub <b>Microsoft Edge</b>.</div>
-            <div>👉 <b>iPhone (iOS):</b> Otwórz stronę w darmowej przeglądarce <b>Bluefy</b> z App Store.</div>
-          </div>
-        </div>
-      )}
-
-      {/* Connection */}
+      {/* Connection card */}
       <section className="card-surface">
         <div className="flex items-center gap-3">
           <span
-            className={`status-dot ${ble.connected ? "bg-success pulse-danger" : "bg-destructive"}`}
+            className={`status-dot ${ble.connected ? "bg-success" : "bg-destructive"}`}
             style={ble.connected ? { boxShadow: "0 0 0 4px color-mix(in oklab, var(--color-success) 25%, transparent)" } : undefined}
           />
           <div className="flex-1">
@@ -68,26 +112,28 @@ function Dashboard() {
           )}
         </div>
 
-        <div className="mt-4 grid grid-cols-1 gap-2">
+        <div className="mt-4">
           {!ble.connected ? (
-            <div className="grid grid-cols-1 gap-2">
+            <div className="space-y-2">
+              {/* BEZPOŚREDNI onClick — requestDevice wywoływany natychmiast po kliknięciu */}
               <button
                 type="button"
-                onClick={ble.connect}
+                onClick={handleConnect}
                 disabled={ble.connecting}
-                className="w-full flex items-center justify-center gap-2 rounded-2xl bg-primary text-primary-foreground py-4 font-bold text-base shadow-lg active:scale-[0.98] transition-all disabled:opacity-50 cursor-pointer"
+                className="w-full flex items-center justify-center gap-2 rounded-2xl bg-primary text-primary-foreground py-4 font-bold text-base shadow-lg active:scale-[0.98] transition-all disabled:opacity-50"
               >
                 <Bluetooth size={22} />
-                {ble.connecting ? "Wybierz urządzenie w oknie..." : "🔍 SZUKAJ OBROŻY (BLE)"}
+                {ble.connecting ? "Wybierz urządzenie..." : "🔍 Połącz z Obrożą (BLE)"}
               </button>
-              <p className="text-[11px] leading-relaxed text-muted-foreground text-center pt-1">
-                Kliknięcie otworzy okienko wyboru Bluetooth. Wybierz obrożę i kliknij <b>Paruj</b>.
+              <p className="text-[11px] text-muted-foreground text-center">
+                Chrome / Edge na Windows · Bluefy na iPhone
               </p>
             </div>
           ) : (
             <button
+              type="button"
               onClick={ble.sleepCollar}
-              className="flex items-center justify-center gap-2 rounded-2xl bg-secondary text-secondary-foreground py-3 font-semibold"
+              className="w-full flex items-center justify-center gap-2 rounded-2xl bg-secondary text-secondary-foreground py-3 font-semibold"
             >
               <Moon size={18} /> 💤 Uśpij Obrożę
             </button>
@@ -96,17 +142,16 @@ function Dashboard() {
       </section>
 
       {/* Spacer Mode */}
-      <section className={`card-surface ${ble.spacerOn ? "pulse-spacer border-warning" : ""}`}>
+      <section className={`card-surface ${ble.spacerOn ? "border-warning/60" : ""}`}>
         <div className="flex items-start gap-3">
           <Footprints className="text-warning mt-1" size={22} />
           <div className="flex-1">
             <h2 className="font-semibold">🚶 Tryb Spaceru</h2>
-            <p className="text-xs text-muted-foreground mt-1">
-              Gdy pies ucieknie i zerwie BLE, obroża zacznie pikać.
-            </p>
+            <p className="text-xs text-muted-foreground mt-1">Gdy pies ucieknie i zerwie BLE, obroża zacznie pikać.</p>
           </div>
         </div>
         <button
+          type="button"
           onClick={() => ble.setSpacer(!ble.spacerOn)}
           disabled={!ble.connected}
           className={`mt-4 w-full rounded-2xl py-3 font-semibold disabled:opacity-40 transition-colors ${
@@ -117,16 +162,16 @@ function Dashboard() {
         </button>
       </section>
 
-      {/* Quick Stats */}
+      {/* Stats */}
       <section className="card-surface">
         <h2 className="font-semibold mb-3">📊 Statystyki</h2>
         <ul className="space-y-2 text-sm">
           <li className="flex justify-between">
-            <span className="text-muted-foreground">Ostatnie 10 godzin</span>
+            <span className="text-muted-foreground">Ostatnie 10h</span>
             <span className="font-semibold">{last10h} szczekań</span>
           </li>
           <li className="flex justify-between">
-            <span className="text-muted-foreground">🔋 Bateria obroży</span>
+            <span className="text-muted-foreground">🔋 Bateria</span>
             <span className="font-semibold">{ble.battery !== null ? `${ble.battery.toFixed(2)} V` : "—"}</span>
           </li>
           <li className="flex justify-between">
@@ -138,7 +183,7 @@ function Dashboard() {
         </ul>
       </section>
 
-      {/* Correction Test */}
+      {/* Test korekty */}
       <section className="card-surface">
         <div className="flex items-start gap-3">
           <Zap className="text-destructive mt-1" size={22} />
@@ -148,6 +193,7 @@ function Dashboard() {
           </div>
         </div>
         <button
+          type="button"
           onClick={ble.testCorrection}
           disabled={!ble.connected}
           className="mt-4 w-full rounded-2xl bg-destructive text-destructive-foreground py-3 font-semibold disabled:opacity-40"
@@ -156,21 +202,21 @@ function Dashboard() {
         </button>
       </section>
 
-      {/* BLE Console & Diagnostics */}
+      {/* BLE Logs */}
       <section className="card-surface space-y-2">
         <h2 className="text-xs font-semibold flex items-center gap-1.5 text-muted-foreground">
-          <Terminal size={14} /> Logi i diagnostyka BLE
+          <Terminal size={13} /> Diagnostyka BLE
         </h2>
-        <div className="bg-background/90 border border-border/40 rounded-xl p-3 font-mono text-[11px] text-muted-foreground max-h-48 overflow-y-auto space-y-1">
-          {ble.logs && ble.logs.length > 0 ? (
-            ble.logs.map((log, idx) => (
-              <div key={idx} className="leading-tight">{log}</div>
-            ))
-          ) : (
-            <div>Oczekiwanie na akcję użytkownika...</div>
-          )}
+        <div className="bg-black/40 rounded-xl p-3 font-mono text-[11px] text-green-400 max-h-48 overflow-y-auto space-y-0.5">
+          {ble.logs.map((l, i) => <div key={i}>{l}</div>)}
         </div>
       </section>
     </div>
   );
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function toast_error(msg: string) {
+  // Dynamic import to avoid top-level sonner import issues
+  import("sonner").then(m => m.toast.error(msg, { duration: 8000 })).catch(() => alert(msg));
 }
